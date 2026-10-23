@@ -150,6 +150,23 @@ def draw_piece(surface: pygame.Surface, piece: Piece, x: int, y: int, size: int)
         pygame.draw.line(surface, cross_c, (cx - 5, cross_y - 2), (cx + 5, cross_y - 2), 3)
 
 
+def draw_trophy(surface: pygame.Surface, cx: int, cy: int, color: Tuple[int, int, int]):
+    """Renders an elegant vector trophy icon for game victory / status dialogs."""
+    # Pedestal Base
+    pygame.draw.rect(surface, color, (cx - 20, cy + 12, 40, 6), border_radius=2)
+    pygame.draw.rect(surface, color, (cx - 7, cy + 3, 14, 10))
+    # Cup polygon
+    pts = [(cx - 24, cy - 20), (cx + 24, cy - 20), (cx + 15, cy + 3), (cx - 15, cy + 3)]
+    pygame.draw.polygon(surface, color, pts)
+    pygame.draw.ellipse(surface, color, (cx - 24, cy - 24, 48, 8))
+    # Left & Right handles
+    pygame.draw.circle(surface, color, (cx - 23, cy - 8), 10, width=3)
+    pygame.draw.circle(surface, color, (cx + 23, cy - 8), 10, width=3)
+    # Center emblem star / spark
+    pygame.draw.circle(surface, (255, 255, 255), (cx, cy - 8), 3)
+
+
+
 # =============================================================================
 # EVALUATION & HEURISTIC ENGINE (Fast Tactical AI)
 # =============================================================================
@@ -236,6 +253,19 @@ def run_chess(screen: pygame.Surface, clock: pygame.time.Clock):
     font_sub = pygame.font.SysFont("helvetica", 12, bold=False)
     font_moves = pygame.font.SysFont("courier", 13, bold=False)
 
+    font_modal_title = pygame.font.SysFont("helvetica", 23, bold=True)
+    font_modal_sub = pygame.font.SysFont("helvetica", 16, bold=True)
+    font_btn_main = pygame.font.SysFont("helvetica", 15, bold=True)
+    font_btn_hint = pygame.font.SysFont("helvetica", 11, bold=False)
+
+    # Game Over Pop-up Modal Geometry
+    modal_gameover_w = 480
+    modal_gameover_h = 280
+    mg_x = (W - modal_gameover_w) // 2
+    mg_y = (H - modal_gameover_h) // 2
+    btn_replay_rect = pygame.Rect(mg_x + 35, mg_y + 195, 195, 58)
+    btn_quit_rect = pygame.Rect(mg_x + 250, mg_y + 195, 195, 58)
+
     board = ChessBoard()
     selected_sq: Optional[Tuple[int, int]] = None
     legal_destinations: List[Move] = []
@@ -250,8 +280,11 @@ def run_chess(screen: pygame.Surface, clock: pygame.time.Clock):
 
     running = True
     while running:
+        status_enum, status_desc = board.get_game_status()
+        is_game_over = status_enum != GameStatus.ACTIVE
+
         is_ai_turn = False
-        if not board.get_game_status()[0] != GameStatus.ACTIVE:
+        if not is_game_over:
             if game_mode == 0 and board.turn == Color.BLACK:
                 is_ai_turn = True
             elif game_mode == 2 and board.turn == Color.WHITE:
@@ -276,27 +309,50 @@ def run_chess(screen: pygame.Surface, clock: pygame.time.Clock):
             if event.type == pygame.QUIT:
                 return "QUIT"
             elif event.type == pygame.KEYDOWN:
-                if event.key == pygame.K_ESCAPE:
-                    return "MENU"
-                elif event.key == pygame.K_u:
-                    # Undo move
-                    board.undo_move()
-                    if game_mode in (0, 2) and board.state_history:
+                if is_game_over:
+                    if event.key in (pygame.K_r, pygame.K_RETURN, pygame.K_SPACE):
+                        board = ChessBoard()
+                        selected_sq = None
+                        legal_destinations.clear()
+                        last_move = None
+                        pending_promotion_move = None
+                        continue
+                    elif event.key in (pygame.K_ESCAPE, pygame.K_q):
+                        return "MENU"
+                else:
+                    if event.key == pygame.K_ESCAPE:
+                        return "MENU"
+                    elif event.key == pygame.K_u:
+                        # Undo move
                         board.undo_move()
-                    selected_sq = None
-                    legal_destinations.clear()
-                    last_move = board.move_history[-1] if board.move_history else None
-                elif event.key == pygame.K_r:
-                    board = ChessBoard()
-                    selected_sq = None
-                    legal_destinations.clear()
-                    last_move = None
-                    pending_promotion_move = None
-                elif event.key == pygame.K_m:
-                    game_mode = (game_mode + 1) % len(mode_names)
+                        if game_mode in (0, 2) and board.state_history:
+                            board.undo_move()
+                        selected_sq = None
+                        legal_destinations.clear()
+                        last_move = board.move_history[-1] if board.move_history else None
+                    elif event.key == pygame.K_r:
+                        board = ChessBoard()
+                        selected_sq = None
+                        legal_destinations.clear()
+                        last_move = None
+                        pending_promotion_move = None
+                    elif event.key == pygame.K_m:
+                        game_mode = (game_mode + 1) % len(mode_names)
 
             elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                 mx, my = event.pos
+
+                # 0. Check Game Over popup clicks first
+                if is_game_over:
+                    if btn_replay_rect.collidepoint(mx, my):
+                        board = ChessBoard()
+                        selected_sq = None
+                        legal_destinations.clear()
+                        last_move = None
+                        pending_promotion_move = None
+                    elif btn_quit_rect.collidepoint(mx, my):
+                        return "MENU"
+                    continue
 
                 # 1. Check promotion popup clicks
                 if pending_promotion_move:
@@ -537,7 +593,99 @@ def run_chess(screen: pygame.Surface, clock: pygame.time.Clock):
                 pygame.draw.rect(screen, (71, 85, 105), b_rect, width=1, border_radius=8)
                 draw_piece(screen, Piece(pt, p_col), bx, by, 58)
 
+        # 4. Pop-up Modal Kemenangan / Game Over (Checkmate, Remis, dll)
+        if is_game_over:
+            # Dark glassmorphism backdrop overlay
+            overlay_surf = pygame.Surface((W, H), pygame.SRCALPHA)
+            overlay_surf.fill((8, 12, 24, 215))
+            screen.blit(overlay_surf, (0, 0))
+
+            # Drop shadow
+            shadow_rect = pygame.Rect(mg_x + 5, mg_y + 7, modal_gameover_w, modal_gameover_h)
+            pygame.draw.rect(screen, (0, 0, 0, 140), shadow_rect, border_radius=18)
+
+            # Main Card Container
+            card_rect = pygame.Rect(mg_x, mg_y, modal_gameover_w, modal_gameover_h)
+            pygame.draw.rect(screen, (22, 30, 49), card_rect, border_radius=18)
+
+            is_checkmate = (status_enum == GameStatus.CHECKMATE)
+            theme_color = GOLD if is_checkmate else CYAN
+            pygame.draw.rect(screen, theme_color, card_rect, width=2, border_radius=18)
+
+            # Trophy Icon
+            draw_trophy(screen, W // 2, mg_y + 44, theme_color)
+
+            # Title Header
+            title_text = "SKAKMAT! PERMAINAN SELESAI" if is_checkmate else "PERMAINAN BERAKHIR (REMIS)"
+            t_head = font_modal_title.render(title_text, True, theme_color)
+            screen.blit(t_head, (mg_x + (modal_gameover_w - t_head.get_width()) // 2, mg_y + 76))
+
+            # Winner / Reason description
+            if is_checkmate:
+                winner_is_white = (board.turn == Color.BLACK)
+                if game_mode == 0:  # Player White vs AI Black
+                    w_text = "🎉 SELAMAT! ANDA MENANG (PUTIH)" if winner_is_white else "🤖 AI (HITAM) MEMENANGKAN GAME"
+                elif game_mode == 2:  # AI White vs Player Black
+                    w_text = "🤖 AI (PUTIH) MEMENANGKAN GAME" if winner_is_white else "🎉 SELAMAT! ANDA MENANG (HITAM)"
+                elif game_mode == 1:  # 2 Players
+                    w_name = "BIDAK PUTIH" if winner_is_white else "BIDAK HITAM"
+                    w_text = f"🏆 {w_name} MERAIH KEMENANGAN!"
+                else:  # AI vs AI
+                    w_name = "PUTIH" if winner_is_white else "HITAM"
+                    w_text = f"🏆 SIMULASI SELESAI: {w_name} MENANG!"
+            else:
+                w_text = status_desc
+
+            t_sub = font_modal_sub.render(w_text, True, WHITE)
+            screen.blit(t_sub, (mg_x + (modal_gameover_w - t_sub.get_width()) // 2, mg_y + 114))
+
+            # Extra stats info
+            stats_str = f"Langkah #{board.fullmove_number}  •  Mode: {mode_names[game_mode]}"
+            t_stat = font_sub.render(stats_str, True, TEXT_MUTED)
+            screen.blit(t_stat, (mg_x + (modal_gameover_w - t_stat.get_width()) // 2, mg_y + 144))
+
+            # Divider line
+            pygame.draw.line(screen, (51, 65, 85), (mg_x + 30, mg_y + 172), (mg_x + modal_gameover_w - 30, mg_y + 172), 1)
+
+            # Button hover detection
+            m_pos = pygame.mouse.get_pos()
+            hover_replay = btn_replay_rect.collidepoint(m_pos)
+            hover_quit = btn_quit_rect.collidepoint(m_pos)
+
+            # Tombol ULANGI (Main Lagi) - Emerald Green
+            c_replay_bg = (34, 197, 94) if hover_replay else (16, 185, 129)
+            pygame.draw.rect(screen, c_replay_bg, btn_replay_rect, border_radius=10)
+            if hover_replay:
+                pygame.draw.rect(screen, WHITE, btn_replay_rect, width=2, border_radius=10)
+
+            t_r1 = font_btn_main.render("🔄 ULANGI", True, WHITE)
+            t_r2 = font_btn_hint.render("Main Lagi [R]", True, (220, 252, 231) if hover_replay else (187, 247, 208))
+            screen.blit(t_r1, (btn_replay_rect.centerx - t_r1.get_width() // 2, btn_replay_rect.centery - 14))
+            screen.blit(t_r2, (btn_replay_rect.centerx - t_r2.get_width() // 2, btn_replay_rect.centery + 7))
+
+            # Tombol BERHENTI (Kembali ke Menu) - Crimson Rose
+            c_quit_bg = (244, 63, 94) if hover_quit else (225, 29, 72)
+            pygame.draw.rect(screen, c_quit_bg, btn_quit_rect, border_radius=10)
+            if hover_quit:
+                pygame.draw.rect(screen, WHITE, btn_quit_rect, width=2, border_radius=10)
+
+            t_q1 = font_btn_main.render("⏹ BERHENTI", True, WHITE)
+            t_q2 = font_btn_hint.render("Ke Menu [ESC]", True, (254, 226, 226) if hover_quit else (254, 205, 211))
+            screen.blit(t_q1, (btn_quit_rect.centerx - t_q1.get_width() // 2, btn_quit_rect.centery - 14))
+            screen.blit(t_q2, (btn_quit_rect.centerx - t_q2.get_width() // 2, btn_quit_rect.centery + 7))
+
         pygame.display.flip()
         clock.tick(60)
 
     return "MENU"
+
+
+if __name__ == "__main__":
+    pygame.init()
+    screen_test = pygame.display.set_mode((1020, 640))
+    pygame.display.set_caption("Master Chess - GAME AHMAD")
+    clock_test = pygame.time.Clock()
+    run_chess(screen_test, clock_test)
+    pygame.quit()
+    sys.exit()
+
